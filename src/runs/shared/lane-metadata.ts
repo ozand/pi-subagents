@@ -110,6 +110,32 @@ export function normalizeWorktreeStatusReference(value: unknown, label = "worktr
 }
 
 /** Validate only the additive lane/worktree fields of a persisted async status. */
+export function validateAsyncStatusSummaryShape(
+	status: Pick<AsyncStatus, "steps" | "outputFile" | "workflowGraph">,
+	label = "async status",
+): void {
+	if (status.steps !== undefined && !Array.isArray(status.steps)) throw new Error(`${label}.steps must be an array.`);
+	for (const [index, step] of (status.steps ?? []).entries()) {
+		if (!step || typeof step !== "object" || Array.isArray(step)) throw new Error(`${label}.steps[${index}] must be an object.`);
+		const record = step as Record<string, unknown>;
+		for (const field of ["model", "thinking"] as const) {
+			if (record[field] !== undefined && typeof record[field] !== "string") throw new Error(`${label}.steps[${index}].${field} must be a string.`);
+		}
+		for (const field of ["recentTools", "recentOutput"] as const) {
+			if (record[field] !== undefined && !Array.isArray(record[field])) throw new Error(`${label}.steps[${index}].${field} must be an array.`);
+		}
+	}
+	if (status.outputFile !== undefined && typeof status.outputFile !== "string") throw new Error(`${label}.outputFile must be a string.`);
+	const graph = status.workflowGraph as unknown;
+	if (graph !== undefined && (!graph || typeof graph !== "object" || Array.isArray(graph))) throw new Error(`${label}.workflowGraph must be an object.`);
+	if (graph && typeof graph === "object" && !Array.isArray(graph)) {
+		const nodes = (graph as { nodes?: unknown }).nodes;
+		if (nodes !== undefined && (!Array.isArray(nodes) || nodes.some((node) => !node || typeof node !== "object" || Array.isArray(node)))) {
+			throw new Error(`${label}.workflowGraph.nodes must be an array of objects.`);
+		}
+	}
+}
+
 export function validateAsyncStatusLaneMetadata(status: Pick<AsyncStatus, "runId" | "workflowKey" | "lane" | "steps">, label = "async status"): void {
 	const lane = normalizeWorkflowLaneMetadata(status.lane, `${label}.lane`);
 	assertWorkflowLaneKey(lane, status.workflowKey, `${label}.lane`);

@@ -21,7 +21,7 @@ import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summar
 import { withWorkflowChildRunModel } from "./workflow-terminal-proof.ts";
 import { assertWorkflowGraphHostSteps, hostStepReportName, hostStepVerdictLabel, validHostStepNodes } from "../shared/host-step-status.ts";
 import { projectAsyncWorkflowRows } from "../shared/async-status-projection.ts";
-import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
+import { validateAsyncStatusLaneMetadata, validateAsyncStatusSummaryShape } from "../shared/lane-metadata.ts";
 import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { formatTimeoutRecoveryLines, projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
@@ -196,13 +196,6 @@ function isAsyncStatusCorruptionError(asyncDir: string, error: unknown): boolean
 		|| /^(workflowChildren|Invalid workflowChildren)/.test(message);
 }
 
-function validateIndexedTerminalStatusForReconciliation(asyncDir: string, status: AsyncStatus): void {
-	const statusPath = path.join(asyncDir, "status.json");
-	if (status.outputFile !== undefined && typeof status.outputFile !== "string") {
-		throw new Error(`Invalid async status '${statusPath}': outputFile must be a string.`);
-	}
-}
-
 // Status path -> last logged signature. A corrupt run is re-scanned on every
 // status poll, so the line repeats only when the file or the outcome changes.
 const reportedCorruptStatus = new Map<string, string>();
@@ -344,6 +337,7 @@ function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { acti
 
 function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }, nestedWarnings: string[] = [], nestedRoute?: NestedRoute): AsyncRunSummary {
 	const statusPath = path.join(asyncDir, "status.json");
+	validateAsyncStatusSummaryShape(status, `Invalid async status '${statusPath}'`);
 	validateAsyncStatusLaneMetadata(status, `Invalid async status '${statusPath}'`);
 	const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
 	if (workflowChildren && status.mode === "workflow") workflowChildren.children = workflowChildren.children.map((child) => withWorkflowChildRunModel(asyncDir, child));
@@ -611,9 +605,9 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		let status: (AsyncStatus & { cwd?: string }) | null;
 		try {
 			// Validate terminal summary fields before reconciliation can repair and rewrite status.
-			if (terminalEntries.has(entry)) {
+			if (terminalEntries.has(entry) && options.reconcile !== false) {
 				const indexedStatus = readStatus(asyncDir);
-				if (indexedStatus) validateIndexedTerminalStatusForReconciliation(asyncDir, indexedStatus);
+				if (indexedStatus) validateAsyncStatusSummaryShape(indexedStatus, `Invalid async status '${path.join(asyncDir, "status.json")}'`);
 			}
 			// Reconciliation can rewrite state; session-scoped discovery does not own foreign runs.
 			let owned = false;

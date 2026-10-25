@@ -1307,7 +1307,7 @@ describe("async status helpers", () => {
 		}
 	});
 
-	it("isolates parse-valid terminal status validation failures per indexed record", () => {
+	it("isolates malformed terminal status containers and step models per indexed record", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-terminal-invalid-"));
 		const originalError = console.error;
 		const diagnostics: string[] = [];
@@ -1323,43 +1323,38 @@ describe("async status helpers", () => {
 				steps: [{ agent: "worker", status: "complete" }],
 			});
 			createAsyncDir(root, "terminal-good", validStatus("terminal-good"));
-			const modelDir = createAsyncDir(root, "terminal-bad-model", {
-				...validStatus("terminal-bad-model"),
-				steps: [{ agent: "worker", status: "complete", model: 42 }],
+			const malformed = [
+				["steps-string", { ...validStatus("terminal-steps-string"), steps: "not-an-array" }],
+				["steps-null", { ...validStatus("terminal-steps-null"), steps: [null] }],
+				["steps-object", { ...validStatus("terminal-steps-object"), steps: [{ agent: "worker", status: "complete", recentTools: "not-an-array" }] }],
+				["workflow-children", { ...validStatus("terminal-workflow-children"), workflowChildren: [] }],
+				["workflow-graph", { ...validStatus("terminal-workflow-graph"), workflowGraph: { runId: "terminal-workflow-graph", mode: "workflow", phases: [], nodes: [null] } }],
+				["step-model", { ...validStatus("terminal-step-model"), steps: [{ agent: "worker", status: "complete", model: 42 }] }],
+				["step-thinking", { ...validStatus("terminal-step-thinking"), steps: [{ agent: "worker", status: "complete", thinking: 42 }] }],
+			] as const;
+			const records = malformed.map(([key, status]) => {
+				const runId = String(status.runId);
+				const dir = path.join(root, runId);
+				fs.mkdirSync(dir, { recursive: true });
+				fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify(status));
+				const indexDir = path.join(root, TERMINAL_RUN_INDEX_DIR, encodeIndexSegment("session-a"));
+				fs.mkdirSync(indexDir, { recursive: true });
+				const markerName = `0000000000000200-${runId}.json`;
+				fs.writeFileSync(path.join(indexDir, markerName), JSON.stringify({ version: 1, runId, sessionId: "session-a", endedAt: 200 }));
+				const statusPath = path.join(dir, "status.json");
+				const marker = path.join(root, TERMINAL_RUN_INDEX_DIR, encodeIndexSegment("session-a"), `0000000000000200-${runId}.json`);
+				return { key, runId, statusPath, statusBytes: fs.readFileSync(statusPath), marker, markerBytes: fs.readFileSync(marker) };
 			});
-			const outputDir = createAsyncDir(root, "terminal-bad-output", {
-				...validStatus("terminal-bad-output"),
-				outputFile: { invalid: true },
-			});
-			const modelStatusPath = path.join(modelDir, "status.json");
-			const outputStatusPath = path.join(outputDir, "status.json");
-			const modelStatusBytes = fs.readFileSync(modelStatusPath);
-			const outputStatusBytes = fs.readFileSync(outputStatusPath);
-			const indexDir = path.join(root, TERMINAL_RUN_INDEX_DIR, encodeIndexSegment("session-a"));
-			const modelMarker = path.join(indexDir, "0000000000000200-terminal-bad-model.json");
-			const outputMarker = path.join(indexDir, "0000000000000200-terminal-bad-output.json");
-			const modelMarkerBytes = fs.readFileSync(modelMarker);
-			const outputMarkerBytes = fs.readFileSync(outputMarker);
-			const list = () => listAsyncRuns(root, { sessionId: "session-a", states: ["complete"] });
+			const list = (reconcile = true) => listAsyncRuns(root, { sessionId: "session-a", states: ["complete"], reconcile });
 
 			assert.deepEqual(list().map((run) => run.id), ["terminal-good"]);
-			assert.deepEqual(list().map((run) => run.id), ["terminal-good"]);
-			assert.equal(diagnostics.filter((line) => line.includes("corrupt status")).length, 2);
-			assert.deepEqual(fs.readFileSync(modelStatusPath), modelStatusBytes);
-			assert.deepEqual(fs.readFileSync(outputStatusPath), outputStatusBytes);
-			assert.deepEqual(fs.readFileSync(modelMarker), modelMarkerBytes);
-			assert.deepEqual(fs.readFileSync(outputMarker), outputMarkerBytes);
-			assert.throws(() => listAsyncRuns(root, { runId: "terminal-bad-model" }), /steps\[0\]\.model must be a string/);
-			assert.throws(() => listAsyncRuns(root, { runId: "terminal-bad-output" }), /outputFile must be a string/);
-			assert.deepEqual(fs.readFileSync(modelStatusPath), modelStatusBytes);
-			assert.deepEqual(fs.readFileSync(outputStatusPath), outputStatusBytes);
-			assert.deepEqual(fs.readFileSync(modelMarker), modelMarkerBytes);
-			assert.deepEqual(fs.readFileSync(outputMarker), outputMarkerBytes);
-
-			fs.writeFileSync(modelStatusPath, JSON.stringify({ ...validStatus("terminal-bad-model"), steps: [{ agent: "worker", status: "complete", model: "repaired" }] }));
-			fs.writeFileSync(outputStatusPath, JSON.stringify({ ...validStatus("terminal-bad-output"), outputFile: "output.txt" }));
-			assert.deepEqual(new Set(list().map((run) => run.id)), new Set(["terminal-good", "terminal-bad-model", "terminal-bad-output"]));
-			assert.equal(diagnostics.filter((line) => line.includes("corrupt status")).length, 2);
+			assert.deepEqual(list(false).map((run) => run.id), ["terminal-good"]);
+			assert.equal(diagnostics.filter((line) => line.includes("corrupt status")).length, malformed.length);
+			for (const record of records) {
+				assert.deepEqual(fs.readFileSync(record.statusPath), record.statusBytes, record.key);
+				assert.deepEqual(fs.readFileSync(record.marker), record.markerBytes, record.key);
+				assert.throws(() => listAsyncRuns(root, { runId: record.runId, reconcile: false }), /Failed to validate async status file|Invalid (?:async status|host step)|workflowChildren/);
+			}
 		} finally {
 			console.error = originalError;
 			fs.rmSync(root, { recursive: true, force: true });
