@@ -1323,12 +1323,25 @@ describe("async status helpers", () => {
 				steps: [{ agent: "worker", status: "complete" }],
 			});
 			createAsyncDir(root, "terminal-good", validStatus("terminal-good"));
+			createAsyncDir(root, "terminal-valid-graph", {
+				...validStatus("terminal-valid-graph"),
+				mode: "workflow",
+				workflowGraph: {
+					runId: "terminal-valid-graph",
+					mode: "workflow",
+					phases: [{ title: "review", nodeIds: ["step-a"] }],
+					nodes: [{ id: "step-a", kind: "step", label: "Review", status: "completed" }],
+				},
+			});
 			const malformed = [
 				["steps-string", { ...validStatus("terminal-steps-string"), steps: "not-an-array" }],
 				["steps-null", { ...validStatus("terminal-steps-null"), steps: [null] }],
 				["steps-object", { ...validStatus("terminal-steps-object"), steps: [{ agent: "worker", status: "complete", recentTools: "not-an-array" }] }],
 				["workflow-children", { ...validStatus("terminal-workflow-children"), workflowChildren: [] }],
-				["workflow-graph", { ...validStatus("terminal-workflow-graph"), workflowGraph: { runId: "terminal-workflow-graph", mode: "workflow", phases: [], nodes: [null] } }],
+				["workflow-graph-node", { ...validStatus("terminal-workflow-graph-node"), workflowGraph: { runId: "terminal-workflow-graph-node", mode: "workflow", phases: [], nodes: [null] } }],
+				["workflow-phase-null", { ...validStatus("terminal-workflow-phase-null"), workflowGraph: { runId: "terminal-workflow-phase-null", mode: "workflow", phases: [null], nodes: [] } }],
+				["workflow-phases-string", { ...validStatus("terminal-workflow-phases-string"), workflowGraph: { runId: "terminal-workflow-phases-string", mode: "workflow", phases: "bad", nodes: [] } }],
+				["workflow-node-ids", { ...validStatus("terminal-workflow-node-ids"), workflowGraph: { runId: "terminal-workflow-node-ids", mode: "workflow", phases: [{ title: "review", nodeIds: "bad" }], nodes: [] } }],
 				["step-model", { ...validStatus("terminal-step-model"), steps: [{ agent: "worker", status: "complete", model: 42 }] }],
 				["step-thinking", { ...validStatus("terminal-step-thinking"), steps: [{ agent: "worker", status: "complete", thinking: 42 }] }],
 			] as const;
@@ -1347,8 +1360,8 @@ describe("async status helpers", () => {
 			});
 			const list = (reconcile = true) => listAsyncRuns(root, { sessionId: "session-a", states: ["complete"], reconcile });
 
-			assert.deepEqual(list().map((run) => run.id), ["terminal-good"]);
-			assert.deepEqual(list(false).map((run) => run.id), ["terminal-good"]);
+			assert.deepEqual(new Set(list().map((run) => run.id)), new Set(["terminal-good", "terminal-valid-graph"]));
+			assert.deepEqual(new Set(list(false).map((run) => run.id)), new Set(["terminal-good", "terminal-valid-graph"]));
 			assert.equal(diagnostics.filter((line) => line.includes("corrupt status")).length, malformed.length);
 			for (const record of records) {
 				assert.deepEqual(fs.readFileSync(record.statusPath), record.statusBytes, record.key);

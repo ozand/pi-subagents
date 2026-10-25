@@ -109,7 +109,19 @@ export function normalizeWorktreeStatusReference(value: unknown, label = "worktr
 	};
 }
 
-/** Validate only the additive lane/worktree fields of a persisted async status. */
+function isValidWorkflowGraphNode(value: unknown): boolean {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const node = value as Record<string, unknown>;
+	if (typeof node.id !== "string" || typeof node.label !== "string" || typeof node.status !== "string") return false;
+	if (node.kind !== "step" && node.kind !== "parallel-group" && node.kind !== "dynamic-parallel-group" && node.kind !== "agent" && node.kind !== "host-step") return false;
+	if (node.phase !== undefined && typeof node.phase !== "string") return false;
+	if (node.agent !== undefined && typeof node.agent !== "string") return false;
+	if (node.children !== undefined && (!Array.isArray(node.children) || node.children.some((child) => !isValidWorkflowGraphNode(child)))) return false;
+	if ((node.kind === "parallel-group" || node.kind === "dynamic-parallel-group") && node.children !== undefined && !Array.isArray(node.children)) return false;
+	return true;
+}
+
+/** Validate the persisted async status containers directly consumed by listing projections. */
 export function validateAsyncStatusSummaryShape(
 	status: Pick<AsyncStatus, "steps" | "outputFile" | "workflowGraph">,
 	label = "async status",
@@ -129,9 +141,15 @@ export function validateAsyncStatusSummaryShape(
 	const graph = status.workflowGraph as unknown;
 	if (graph !== undefined && (!graph || typeof graph !== "object" || Array.isArray(graph))) throw new Error(`${label}.workflowGraph must be an object.`);
 	if (graph && typeof graph === "object" && !Array.isArray(graph)) {
-		const nodes = (graph as { nodes?: unknown }).nodes;
-		if (nodes !== undefined && (!Array.isArray(nodes) || nodes.some((node) => !node || typeof node !== "object" || Array.isArray(node)))) {
-			throw new Error(`${label}.workflowGraph.nodes must be an array of objects.`);
+		const snapshot = graph as { nodes?: unknown; phases?: unknown };
+		if (snapshot.phases !== undefined && (!Array.isArray(snapshot.phases) || snapshot.phases.some((phase) =>
+			!phase || typeof phase !== "object" || Array.isArray(phase)
+			|| typeof phase.title !== "string" || !Array.isArray(phase.nodeIds) || phase.nodeIds.some((id: unknown) => typeof id !== "string")))) {
+			throw new Error(`${label}.workflowGraph.phases must contain phase objects with a title and nodeIds array.`);
+		}
+		if (snapshot.nodes !== undefined && (!Array.isArray(snapshot.nodes) || snapshot.nodes.some((node) =>
+			!node || typeof node !== "object" || Array.isArray(node) || !isValidWorkflowGraphNode(node)))) {
+			throw new Error(`${label}.workflowGraph.nodes must be an array of valid workflow nodes.`);
 		}
 	}
 }
